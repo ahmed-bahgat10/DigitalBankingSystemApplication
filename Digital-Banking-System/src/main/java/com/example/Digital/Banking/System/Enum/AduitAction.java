@@ -1,0 +1,42 @@
+package com.example.Digital.Banking.System.Enum;
+
+public enum AduitAction {
+    // User
+    USER_REGISTERED,
+    USER_LOGIN_SUCCESS,
+    USER_LOGIN_FAILED,
+    USER_LOGOUT,
+
+    // Account
+    ACCOUNT_CREATED,
+    ACCOUNT_SUSPENDED,
+    ACCOUNT_ACTIVATED,
+    ACCOUNT_CLOSED,
+
+    // KYC
+    KYC_SUBMITTED,
+    KYC_VERIFIED,
+    KYC_REJECTED,
+
+    // Deposit
+    DEPOSIT_CREATED,
+    DEPOSIT_COMPLETED,
+    DEPOSIT_FAILED,
+
+    // Withdrawal
+    WITHDRAWAL_CREATED,
+    WITHDRAWAL_COMPLETED,
+    WITHDRAWAL_FAILED,
+
+    // Transfer
+    TRANSFER_CREATED,
+    TRANSFER_COMPLETED,
+    TRANSFER_FAILED,
+
+    // Scheduled Transfer
+    SCHEDULED_TRANSFER_CREATED,
+    SCHEDULED_TRANSFER_CANCELLED,
+    SCHEDULED_TRANSFER_COMPLETED,
+    SCHEDULED_TRANSFER_FAILED
+
+}
