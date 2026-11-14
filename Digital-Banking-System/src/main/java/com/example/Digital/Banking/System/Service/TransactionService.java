@@ -3,6 +3,7 @@ package com.example.Digital.Banking.System.Service;
 import com.example.Digital.Banking.System.Entity.Transaction;
 import com.example.Digital.Banking.System.Entity.WithdrawalProperties;
 import com.example.Digital.Banking.System.Enum.FailureReason;
+import com.example.Digital.Banking.System.Enum.TransactionType;
 import com.example.Digital.Banking.System.Exception.AccountClosedException;
 import com.example.Digital.Banking.System.Exception.AccountSuspendedException;
 import com.example.Digital.Banking.System.Exception.DailyWithdrawalLimitExceededException;
@@ -20,10 +21,12 @@ import java.math.BigDecimal;
 public class TransactionService {
     private final FailedTransactionService FailedTransactionService;
     private final WithdrawalExecutionService withdrawalExecutionService;
+    private final DepositExecutionService depositExecutionService;
     private void recordFailureSafely(
             String accountNumber,
             BigDecimal amount,
             Long userId,
+            TransactionType transactionType,
             FailureReason failureReason
     ) {
         try {
@@ -31,11 +34,13 @@ public class TransactionService {
                     accountNumber,
                     amount,
                     userId,
+                    transactionType,
                     failureReason
             );
         } catch (Exception ex) {
             log.error(
-                    "Failed to record withdrawal failure. Reason: {}",
+                    "Failed to record transaction failure. Type: {}, Reason: {}",
+                    transactionType,
                     failureReason,
                     ex
             );
@@ -61,6 +66,7 @@ public class TransactionService {
                     accountNumber,
                     amount,
                     userId,
+                    TransactionType.WITHDRAW,
                     FailureReason.INSUFFICIENT_FUNDS
             );
 
@@ -72,6 +78,7 @@ public class TransactionService {
                     accountNumber,
                     amount,
                     userId,
+                    TransactionType.WITHDRAW,
                     FailureReason.DAILY_LIMIT_EXCEEDED
             );
 
@@ -83,6 +90,7 @@ public class TransactionService {
                     accountNumber,
                     amount,
                     userId,
+                    TransactionType.WITHDRAW,
                     FailureReason.ACCOUNT_SUSPENDED
             );
 
@@ -94,6 +102,40 @@ public class TransactionService {
                     accountNumber,
                     amount,
                     userId,
+                    TransactionType.WITHDRAW,
+                    FailureReason.ACCOUNT_CLOSED
+            );
+
+            throw ex;
+        }
+    }
+    public Transaction deposit(
+            String accountNumber,
+            BigDecimal amount,
+            Long userId
+    ) {
+        try {
+            return depositExecutionService.executeDeposit(userId, accountNumber, amount);
+
+        } catch (AccountSuspendedException ex) {
+
+            recordFailureSafely(
+                    accountNumber,
+                    amount,
+                    userId,
+                    TransactionType.DEPOSIT,
+                    FailureReason.ACCOUNT_SUSPENDED
+            );
+
+            throw ex;
+
+        } catch (AccountClosedException ex) {
+
+            recordFailureSafely(
+                    accountNumber,
+                    amount,
+                    userId,
+                    TransactionType.DEPOSIT,
                     FailureReason.ACCOUNT_CLOSED
             );
 

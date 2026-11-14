@@ -27,18 +27,36 @@ public class FailedTransactionService {
             String accountNumber,
             BigDecimal amount,
             Long userId,
+            TransactionType transactionType,
             FailureReason failureReason
     ) {
+
+        if (transactionType == null ||
+                (transactionType != TransactionType.DEPOSIT &&
+                        transactionType != TransactionType.WITHDRAW)) {
+            throw new BusinessException("Unsupported transaction type");
+        }
+        if (failureReason == null) {
+            throw new BusinessException("Failure reason is required");
+        }
         Account account = accountRepository
                 .findByUserIdAndAccountNumber(userId, accountNumber)
                 .orElseThrow(() -> new BusinessException("Account not found"));
+
         Transaction transaction = new Transaction();
 
         transaction.setReference(UUID.randomUUID().toString());
         transaction.setAmount(amount);
-        transaction.setSourceAccount(account);
-        transaction.setDestinationAccount(null);
-        transaction.setType(TransactionType.WITHDRAW);
+
+        if (transactionType == TransactionType.DEPOSIT) {
+            transaction.setSourceAccount(null);
+            transaction.setDestinationAccount(account);
+        } else {
+            transaction.setSourceAccount(account);
+            transaction.setDestinationAccount(null);
+        }
+
+        transaction.setType(transactionType);
         transaction.setStatus(TransactionStatus.FAILED);
         transaction.setFailureReason(failureReason);
 
