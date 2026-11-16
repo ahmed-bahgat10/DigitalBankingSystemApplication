@@ -28,5 +28,18 @@ public interface TransactionRepository extends JpaRepository<Transaction,Long> {
             @Param("startOfDay") LocalDateTime startOfDay,
             @Param("endOfDay") LocalDateTime endOfDay
     );
-
+    @Query("""
+    SELECT COALESCE(SUM(t.amount), 0)
+    FROM Transaction t
+    WHERE t.sourceAccount.id = :accountId
+      AND t.type = com.example.Digital.Banking.System.Enum.TransactionType.TRANSFER
+      AND t.status = com.example.Digital.Banking.System.Enum.TransactionStatus.COMPLETED
+      AND t.createdAt >= :startOfDay
+      AND t.createdAt < :endOfDay
+    """)
+    BigDecimal getDailyTransferTotal(
+            @Param("accountId") Long accountId,
+            @Param("startOfDay") LocalDateTime startOfDay,
+            @Param("endOfDay") LocalDateTime endOfDay
+    );
 }
