@@ -11,7 +11,4 @@ public class IdempotencyProperties {
 
     private long retentionHours = 24;
 
-    private long processingTimeoutMinutes = 5;
-
-    private long waitTimeoutSeconds = 5;
 }

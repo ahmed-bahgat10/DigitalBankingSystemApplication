@@ -1,16 +1,16 @@
 package com.example.Digital.Banking.System.Service;
 
-import com.example.Digital.Banking.System.DTO.IdempotencyReservation;
-import com.example.Digital.Banking.System.DTO.IdempotencyResult;
-import com.example.Digital.Banking.System.Entity.IdempotencyRecord;
+import com.example.Digital.Banking.System.DTO.TransferResult;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
+
 import com.example.Digital.Banking.System.Entity.Transaction;
-import com.example.Digital.Banking.System.Entity.WithdrawalProperties;
+
 import com.example.Digital.Banking.System.Enum.FailureReason;
-import com.example.Digital.Banking.System.Enum.IdempotencyStatus;
+
 import com.example.Digital.Banking.System.Enum.TransactionType;
 import com.example.Digital.Banking.System.Exception.*;
-import com.example.Digital.Banking.System.Repository.AccountRepository;
-import com.example.Digital.Banking.System.Repository.TransactionRepository;
+
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -28,35 +28,6 @@ public class TransactionService {
     private final DepositExecutionService depositExecutionService;
     private final TransferExecutionService transferExecutionService;
     private final IdempotencyService idempotencyService;
-    private final IdempotencyStateService idempotencyStateService;
-    private final TransferFailureFinalizationService transferFailureFinalizationService;
-
-    private void recordTransferFailureSafely(
-            String sourceAccountNumber,
-            String destinationAccountNumber,
-            BigDecimal amount,
-            Long userId,
-            FailureReason failureReason,
-            Long idempotencyRecordId
-    ) {
-        try {
-            transferFailureFinalizationService.finalizeFailure(
-                    idempotencyRecordId,
-                    userId,
-                    sourceAccountNumber,
-                    destinationAccountNumber,
-                    amount,
-                    failureReason
-            );
-        } catch (Exception ex) {
-            log.error(
-                    "Failed to finalize transfer failure. Idempotency ID: {}, Reason: {}",
-                    idempotencyRecordId,
-                    failureReason,
-                    ex
-            );
-        }
-    }
 
     private void recordFailureSafely(
             String accountNumber,
@@ -179,174 +150,54 @@ public class TransactionService {
         }
     }
 
-    public Transaction transfer(
-            String sourceAccount,
-            String destinationAccount,
-            BigDecimal amount,
-            Long userId,
-            String idempotencyKey
-    ) {
-
-        if (sourceAccount == null || sourceAccount.isBlank()
-                || destinationAccount == null || destinationAccount.isBlank()) {
-            throw new IllegalArgumentException("Account numbers are required");
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    public Transaction transfer(String sourceAccount, String destinationAccount,
+                                BigDecimal amount, Long userId, String idempotencyKey) {
+        if (idempotencyKey == null || idempotencyKey.isBlank() || idempotencyKey.length() > 128) {
+            throw new BusinessException("Idempotency key must contain 1 to 128 characters");
         }
-
-        String normalizedSource = sourceAccount.trim();
-        String normalizedDestination = destinationAccount.trim();
-
-        String requestHash = idempotencyService.generateRequestHash(
-                normalizedSource,
-                normalizedDestination,
-                amount
-        );
-
-        IdempotencyReservation reservation = idempotencyService.getOrReserve(
-                userId,
-                idempotencyKey,
-                requestHash
-        );
-
-        Long recordId = reservation.record().getId();
-
-        // المفتاح مستخدم قبل كده: ننتظر النتيجة أو نعمل Replay.
-        if (!reservation.newlyCreated()) {
-
-            IdempotencyRecord previousRecord =
-                    idempotencyService.waitForCompletion(userId, idempotencyKey);
-
-            IdempotencyResult previousResult =
-                    idempotencyService.getExistingResult(previousRecord);
-
-            return replayTransferResult(previousResult);
-        }
-
-        try {
-
-            return transferExecutionService.executeTransfer(
-                    userId,
-                    normalizedSource,
-                    normalizedDestination,
-                    amount,
-                    recordId
-            );
-
-        } catch (InsufficientFundsException exception) {
-
-            finalizeTransferFailureSafely(
-                    recordId, userId, normalizedSource, normalizedDestination,
-                    amount, FailureReason.INSUFFICIENT_FUNDS
-            );
-
-            throw exception;
-
-        } catch (DailyTransferLimitExceededException exception) {
-
-            finalizeTransferFailureSafely(
-                    recordId, userId, normalizedSource, normalizedDestination,
-                    amount, FailureReason.DAILY_LIMIT_EXCEEDED
-            );
-
-            throw exception;
-
-        } catch (AccountSuspendedException exception) {
-
-            finalizeTransferFailureSafely(
-                    recordId, userId, normalizedSource, normalizedDestination,
-                    amount, FailureReason.ACCOUNT_SUSPENDED
-            );
-
-            throw exception;
-
-        } catch (AccountClosedException exception) {
-
-            finalizeTransferFailureSafely(
-                    recordId, userId, normalizedSource, normalizedDestination,
-                    amount, FailureReason.ACCOUNT_CLOSED
-            );
-
-            throw exception;
-        }
-    }
-
-    private RuntimeException replayFailure(FailureReason reason) {
-
-        if (reason == null) {
-            return new BusinessException("Previous transfer failed");
-        }
-
-        return switch (reason) {
-            case INSUFFICIENT_FUNDS ->
-                    new InsufficientFundsException("Insufficient funds");
-
-            case DAILY_LIMIT_EXCEEDED ->
-                    new DailyTransferLimitExceededException("Daily limit exceeded");
-
-            case ACCOUNT_SUSPENDED ->
-                    new AccountSuspendedException("Account is not available");
-
-            case ACCOUNT_CLOSED ->
-                    new AccountClosedException("Account is not available");
-        };
-    }
-
-    private Transaction replayTransferResult(IdempotencyResult result) {
-
-        if (result.status() == IdempotencyStatus.COMPLETED) {
-            return result.transaction();
-        }
-
-        if (result.status() == IdempotencyStatus.FAILED) {
-
-            switch (result.failureReason()) {
-
-                case INSUFFICIENT_FUNDS ->
-                        throw new InsufficientFundsException("Insufficient funds");
-
-                case DAILY_LIMIT_EXCEEDED ->
-                        throw new DailyTransferLimitExceededException(
-                                "Daily transfer limit exceeded"
-                        );
-
-                case ACCOUNT_SUSPENDED ->
-                        throw new AccountSuspendedException("Account is suspended");
-
-                case ACCOUNT_CLOSED ->
-                        throw new AccountClosedException("Account is closed");
+        String hash = idempotencyService.generateRequestHash(sourceAccount, destinationAccount, amount);
+        var previous = idempotencyService.findResult(userId, idempotencyKey, hash);
+        TransferResult result;
+        if (previous.isPresent()) {
+            result = previous.get();
+        } else {
+            try {
+                result = transferExecutionService.executeTransfer(userId, sourceAccount.trim(),
+                        destinationAccount.trim(), amount, idempotencyKey, hash);
+            } catch (RuntimeException technicalFailure) {
+                // Read committed state after rollback, including an uncertain commit outcome.
+                try {
+                    var committed = idempotencyService.findResult(userId, idempotencyKey, hash);
+                    if (committed.isEmpty()) {
+                        throw technicalFailure;
+                    }
+                    result = committed.get();
+                } catch (RuntimeException recoveryFailure) {
+                    if (recoveryFailure != technicalFailure) {
+                        recoveryFailure.addSuppressed(technicalFailure);
+                    }
+                    throw recoveryFailure;
+                }
             }
         }
-
-        throw new IdempotencyRequestInProgressException(
-                "The previous request is still being processed"
-        );
-    }
-    private void finalizeTransferFailureSafely(
-            Long recordId,
-            Long userId,
-            String sourceAccount,
-            String destinationAccount,
-            BigDecimal amount,
-            FailureReason failureReason
-    ) {
-
-        try {
-
-            transferFailureFinalizationService.finalizeFailure(
-                    recordId,
-                    userId,
-                    sourceAccount,
-                    destinationAccount,
-                    amount,
-                    failureReason
-            );
-
-        } catch (Exception exception) {
-
-            log.error(
-                    "Failed to finalize transfer failure. Idempotency record ID: {}",
-                    recordId,
-                    exception
-            );
+        if (result.isSuccessful()) {
+            return result.transaction();
         }
+        throw replayFailure(result);
+    }
+
+    private RuntimeException replayFailure(TransferResult result) {
+        String message = result.transaction().getFailureMessage();
+        if (message == null) {
+            message = "Previous transfer failed: " + result.failureReason();
+        }
+        return switch (result.failureReason()) {
+            case INSUFFICIENT_FUNDS -> new InsufficientFundsException(message);
+            case DAILY_LIMIT_EXCEEDED -> new DailyTransferLimitExceededException(message);
+            case ACCOUNT_SUSPENDED -> new AccountSuspendedException(message);
+            case ACCOUNT_CLOSED -> new AccountClosedException(message);
+            case INVALID_TRANSFER -> new BusinessException(message);
+        };
     }
 }

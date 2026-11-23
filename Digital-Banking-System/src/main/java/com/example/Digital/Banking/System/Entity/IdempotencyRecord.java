@@ -1,13 +1,11 @@
 package com.example.Digital.Banking.System.Entity;
 
-
 import com.example.Digital.Banking.System.Enum.FailureReason;
 import com.example.Digital.Banking.System.Enum.IdempotencyStatus;
 import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
-import org.hibernate.annotations.CreationTimestamp;
 
 import java.time.Instant;
 
@@ -58,7 +56,4 @@ public class IdempotencyRecord {
     @Column(nullable = false)
     private Instant expiresAt;
 
-    @Column(name = "processing_expires_at")
-    private Instant processingExpiresAt;
 }
-

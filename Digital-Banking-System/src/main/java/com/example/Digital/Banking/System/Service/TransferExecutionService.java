@@ -9,6 +9,18 @@ import com.example.Digital.Banking.System.Enum.TransactionType;
 import com.example.Digital.Banking.System.Exception.*;
 import com.example.Digital.Banking.System.Repository.AccountRepository;
 import com.example.Digital.Banking.System.Repository.TransactionRepository;
+import com.example.Digital.Banking.System.DTO.TransferResult;
+import com.example.Digital.Banking.System.Entity.IdempotencyRecord;
+import com.example.Digital.Banking.System.Entity.IdempotencyProperties;
+import com.example.Digital.Banking.System.Enum.FailureReason;
+import com.example.Digital.Banking.System.Enum.IdempotencyStatus;
+import com.example.Digital.Banking.System.Repository.IdempotencyRecordRepository;
+import com.example.Digital.Banking.System.Repository.UserRepository;
+
+import org.springframework.transaction.annotation.Isolation;
+import org.springframework.transaction.annotation.Propagation;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -25,7 +37,9 @@ public class TransferExecutionService {
     private final AccountRepository accountRepository;
     private final TransactionRepository transactionRepository;
     private final TransferProperties transferProperties;
-    private final IdempotencyStateService idempotencyStateService;
+    private final IdempotencyRecordRepository idempotencyRepository;
+    private final UserRepository userRepository;
+    private final IdempotencyProperties idempotencyProperties;
 
     private void validateAmount(BigDecimal amount) {
 
@@ -64,22 +78,13 @@ public class TransferExecutionService {
             throw new BusinessException("Cannot transfer to the same account");
         }
 
-        Account source = accountRepository
-                .findByAccountNumber(sourceAccountNumber);
-
-        if (source == null) {
-            throw new BusinessException("Source account not found");
-        }
-
-        Account destination = accountRepository
-                .findByAccountNumber(destinationAccountNumber);
-
-        if (destination == null) {
-            throw new BusinessException("Destination account not found");
-        }
-
-        Long firstId = Math.min(source.getId(), destination.getId());
-        Long secondId = Math.max(source.getId(), destination.getId());
+        // Scalar lookups avoid putting stale account versions in the persistence context.
+        Long sourceId = accountRepository.findIdByAccountNumber(sourceAccountNumber)
+                .orElseThrow(() -> new BusinessException("Source account not found"));
+        Long destinationId = accountRepository.findIdByAccountNumber(destinationAccountNumber)
+                .orElseThrow(() -> new BusinessException("Destination account not found"));
+        Long firstId = Math.min(sourceId, destinationId);
+        Long secondId = Math.max(sourceId, destinationId);
 
         Account first = accountRepository.findByIdForUpdate(firstId)
                 .orElseThrow(() -> new BusinessException("Account not found"));
@@ -87,8 +92,8 @@ public class TransferExecutionService {
         Account second = accountRepository.findByIdForUpdate(secondId)
                 .orElseThrow(() -> new BusinessException("Account not found"));
 
-        Account lockedSource = first.getId().equals(source.getId()) ? first : second;
-        Account lockedDestination = first.getId().equals(destination.getId()) ? first : second;
+        Account lockedSource = first.getId().equals(sourceId) ? first : second;
+        Account lockedDestination = first.getId().equals(destinationId) ? first : second;
 
         // Verify that the locked accounts are still the requested accounts.
         if (!lockedSource.getAccountNumber().equals(sourceAccountNumber) ||
@@ -149,63 +154,82 @@ public class TransferExecutionService {
         }
     }
 
-    @Transactional
-    public Transaction executeTransfer(
-            Long userId,
-            String sourceAccountNumber,
-            String destinationAccountNumber,
-            BigDecimal amount,
-            Long idempotencyRecordId
-    ){
-        validateAmount(amount);
+    @Transactional(propagation = Propagation.REQUIRES_NEW, isolation = Isolation.READ_COMMITTED)
+    public TransferResult executeTransfer(
+            Long userId, String sourceAccountNumber, String destinationAccountNumber,
+            BigDecimal amount, String idempotencyKey, String requestHash) {
+        var now = Instant.now();
+        var record = new IdempotencyRecord();
+        record.setUser(userRepository.findById(userId)
+                .orElseThrow(() -> new BusinessException("User not found")));
+        record.setIdempotencyKey(idempotencyKey);
+        record.setRequestHash(requestHash);
+        // Provisional value is never committed without the final transaction and result.
+        record.setStatus(IdempotencyStatus.COMPLETED);
+        record.setCreatedAt(now);
+        record.setExpiresAt(now.plus(idempotencyProperties.getRetentionHours(),
+                ChronoUnit.HOURS));
+        // The unique constraint serializes duplicate keys before account locks.
+        idempotencyRepository.saveAndFlush(record);
 
-        Account[] accounts = lockAccounts(
-                sourceAccountNumber,
-                destinationAccountNumber
-        );
-
-        Account sourceAccount = accounts[0];
-        Account destinationAccount = accounts[1];
-
-        if (!sourceAccount.getUser().getId().equals(userId)) {
-            throw new BusinessException("Source account does not belong to user");
+        Account source = null;
+        Account destination = null;
+        FailureReason reason = null;
+        String failureMessage = null;
+        try {
+            validateAmount(amount);
+            Account[] accounts = lockAccounts(sourceAccountNumber, destinationAccountNumber);
+            source = accounts[0];
+            destination = accounts[1];
+            if (!source.getUser().getId().equals(userId)) {
+                source = null;
+                destination = null;
+                throw new BusinessException("Source account does not belong to user");
+            }
+            validateAccounts(source, destination);
+            validateDailyTransferLimit(source, amount);
+            validateSufficientFunds(source, amount);
+        } catch (InsufficientFundsException ex) {
+            reason = FailureReason.INSUFFICIENT_FUNDS;
+            failureMessage = ex.getMessage();
+        } catch (DailyTransferLimitExceededException ex) {
+            reason = FailureReason.DAILY_LIMIT_EXCEEDED;
+            failureMessage = ex.getMessage();
+        } catch (AccountSuspendedException ex) {
+            reason = FailureReason.ACCOUNT_SUSPENDED;
+            failureMessage = ex.getMessage();
+        } catch (AccountClosedException ex) {
+            reason = FailureReason.ACCOUNT_CLOSED;
+            failureMessage = ex.getMessage();
+        } catch (BusinessException ex) {
+            reason = FailureReason.INVALID_TRANSFER;
+            failureMessage = ex.getMessage();
         }
 
-        if (sourceAccount.getId().equals(destinationAccount.getId())) {
-            throw new BusinessException("Cannot transfer to the same account");
-        }
-
-        validateAccounts(sourceAccount, destinationAccount);
-
-        validateDailyTransferLimit(sourceAccount, amount);
-
-        validateSufficientFunds(sourceAccount, amount);
-
-        sourceAccount.setBalance(
-                sourceAccount.getBalance().subtract(amount)
-        );
-
-        destinationAccount.setBalance(
-                destinationAccount.getBalance().add(amount)
-        );
         Transaction transaction = new Transaction();
-
         transaction.setReference(UUID.randomUUID().toString());
         transaction.setAmount(amount);
-        transaction.setSourceAccount(sourceAccount);
-        transaction.setDestinationAccount(destinationAccount);
+        transaction.setSourceAccount(source);
+        transaction.setDestinationAccount(destination);
         transaction.setType(TransactionType.TRANSFER);
-        transaction.setStatus(TransactionStatus.COMPLETED);
-        transaction.setFailureReason(null);
-
-        Transaction savedTransaction = transactionRepository.save(transaction);
-
-        idempotencyStateService.markCompleted(
-                idempotencyRecordId,
-                savedTransaction
-        );
-
-        return savedTransaction;
-
+        transaction.setFailureReason(reason);
+        transaction.setFailureMessage(failureMessage);
+        if (reason == null) {
+            source.setBalance(source.getBalance().subtract(amount));
+            destination.setBalance(destination.getBalance().add(amount));
+            transaction.setStatus(TransactionStatus.COMPLETED);
+            transaction.setCompletedAt(Instant.now());
+        } else {
+            transaction.setStatus(TransactionStatus.FAILED);
+        }
+        Transaction saved = transactionRepository.save(transaction);
+        record.setTransaction(saved);
+        record.setFailureReason(reason);
+        record.setStatus(reason == null
+                ? IdempotencyStatus.COMPLETED
+                : IdempotencyStatus.FAILED);
+        return reason == null
+                ? TransferResult.completed(saved)
+                : TransferResult.failed(saved, reason);
     }
 }

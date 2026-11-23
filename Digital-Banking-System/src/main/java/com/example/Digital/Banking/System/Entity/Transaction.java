@@ -53,6 +53,9 @@ public class Transaction {
     @Enumerated(EnumType.STRING)
     private FailureReason failureReason;
 
+    @Column(name = "failure_message", length = 1024)
+    private String failureMessage;
+
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
     private TransactionType type;

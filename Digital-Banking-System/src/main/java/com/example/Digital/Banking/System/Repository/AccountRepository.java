@@ -12,6 +12,9 @@ import java.util.List;
 import java.util.Optional;
 
 public interface AccountRepository extends JpaRepository<Account,Long> {
+    @Query("SELECT a.id FROM Account a WHERE a.accountNumber = :accountNumber")
+    Optional<Long> findIdByAccountNumber(@Param("accountNumber") String accountNumber);
+
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("""
         SELECT a FROM Account a

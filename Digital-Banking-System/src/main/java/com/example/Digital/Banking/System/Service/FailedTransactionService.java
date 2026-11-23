@@ -63,40 +63,4 @@ public class FailedTransactionService {
         transactionRepository.save(transaction);
     }
 
-    @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public Transaction recordTransferFailure(
-            String sourceAccountNumber,
-            String destinationAccountNumber,
-            BigDecimal amount,
-            Long userId,
-            FailureReason failureReason
-    ){
-
-        if (failureReason == null) {
-            throw new BusinessException("Failure reason is required");
-        }
-
-        Account sourceAccount = accountRepository
-                .findByUserIdAndAccountNumber(userId, sourceAccountNumber)
-                .orElseThrow(() -> new BusinessException("Source account not found"));
-
-        Account destinationAccount = accountRepository
-                .findByAccountNumber(destinationAccountNumber);
-
-        if (destinationAccount == null) {
-            throw new BusinessException("Destination account not found");
-        }
-
-        Transaction transaction = new Transaction();
-
-        transaction.setReference(UUID.randomUUID().toString());
-        transaction.setAmount(amount);
-        transaction.setSourceAccount(sourceAccount);
-        transaction.setDestinationAccount(destinationAccount);
-        transaction.setType(TransactionType.TRANSFER);
-        transaction.setStatus(TransactionStatus.FAILED);
-        transaction.setFailureReason(failureReason);
-
-        return transactionRepository.save(transaction);
-    }
 }

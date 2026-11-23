@@ -1,6 +1,5 @@
 package com.example.Digital.Banking.System.Service;
 
-import com.example.Digital.Banking.System.Enum.IdempotencyStatus;
 import com.example.Digital.Banking.System.Repository.IdempotencyRecordRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -22,8 +21,7 @@ public class IdempotencyCleanupService {
     public void cleanupExpiredRecords() {
 
         int deleted = repository.deleteExpiredRecords(
-                Instant.now(),
-                IdempotencyStatus.IN_PROGRESS
+                Instant.now()
         );
 
         if (deleted > 0) {
