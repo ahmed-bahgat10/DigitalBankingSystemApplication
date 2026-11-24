@@ -44,6 +44,7 @@ public class FailedTransactionService {
                 .orElseThrow(() -> new BusinessException("Account not found"));
 
         Transaction transaction = new Transaction();
+        transaction.setInitiatedBy(account.getUser());
 
         transaction.setReference(UUID.randomUUID().toString());
         transaction.setAmount(amount);

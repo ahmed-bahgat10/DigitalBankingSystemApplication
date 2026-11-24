@@ -207,6 +207,7 @@ public class TransferExecutionService {
         }
 
         Transaction transaction = new Transaction();
+        transaction.setInitiatedBy(record.getUser());
         transaction.setReference(UUID.randomUUID().toString());
         transaction.setAmount(amount);
         transaction.setSourceAccount(source);

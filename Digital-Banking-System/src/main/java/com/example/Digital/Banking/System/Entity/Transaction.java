@@ -16,7 +16,11 @@ import java.time.LocalDateTime;
 import java.util.UUID;
 
 @Entity
-@Table(name = "transactions")
+@Table(name = "transactions", indexes = {
+        @Index(name = "idx_transaction_source_history", columnList = "source_account_id,createdAt"),
+        @Index(name = "idx_transaction_destination_history", columnList = "destination_account_id,createdAt"),
+        @Index(name = "idx_transaction_initiator_history", columnList = "initiated_by_id,createdAt")
+})
 @Getter
 @Setter
 @NoArgsConstructor
@@ -30,6 +34,11 @@ public class Transaction {
 
     @Column(nullable = false)
     private BigDecimal amount;
+
+    // Nullable for historical rows whose initiator cannot be established safely.
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "initiated_by_id", foreignKey = @ForeignKey(name = "fk_transaction_initiator"))
+    private User initiatedBy;
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "source_account_id")

@@ -63,6 +63,7 @@ public class DepositExecutionService {
 
         account.setBalance(account.getBalance().add(amount));
         Transaction transaction = new Transaction();
+        transaction.setInitiatedBy(account.getUser());
         transaction.setReference(UUID.randomUUID().toString());
         transaction.setSourceAccount(null);
         transaction.setDestinationAccount(account);

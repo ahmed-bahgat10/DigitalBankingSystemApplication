@@ -31,7 +31,8 @@ class TransferIdempotencyTest {
     @EnableTransactionManagement
     @EnableJpaRepositories(basePackageClasses = AccountRepository.class)
     @Import({TransactionService.class, TransferExecutionService.class, IdempotencyService.class,
-            FailedTransactionService.class, WithdrawalExecutionService.class, DepositExecutionService.class})
+            FailedTransactionService.class, WithdrawalExecutionService.class, DepositExecutionService.class,
+            TransactionHistoryService.class, com.example.Digital.Banking.System.Mapper.TransactionMapper.class})
     static class Config {
         @Bean DataSource dataSource() {
             return new DriverManagerDataSource(
@@ -43,7 +44,8 @@ class TransferIdempotencyTest {
             factory.setDataSource(ds);
             factory.setPackagesToScan(Account.class.getPackageName());
             factory.setJpaVendorAdapter(new HibernateJpaVendorAdapter());
-            factory.setJpaPropertyMap(Map.of("hibernate.hbm2ddl.auto", "create-drop"));
+            factory.setJpaPropertyMap(Map.of("hibernate.hbm2ddl.auto", "create-drop", "hibernate.generate_statistics", "true",
+                    "hibernate.query.fail_on_pagination_over_collection_fetch", "true"));
             return factory;
         }
         @Bean PlatformTransactionManager transactionManager(EntityManagerFactory emf) {
@@ -56,8 +58,19 @@ class TransferIdempotencyTest {
             p.setDailyLimit(new BigDecimal("500"));
             return p;
         }
-        @Bean DepositProperties depositProperties() { return new DepositProperties(); }
-        @Bean WithdrawalProperties withdrawalProperties() { return new WithdrawalProperties(); }
+        @Bean DepositProperties depositProperties() {
+            var p = new DepositProperties();
+            p.setMinAmount(new BigDecimal("1"));
+            p.setMaxAmount(new BigDecimal("10000"));
+            return p;
+        }
+        @Bean WithdrawalProperties withdrawalProperties() {
+            var p = new WithdrawalProperties();
+            p.setMinAmount(new BigDecimal("1"));
+            p.setMaxAmount(new BigDecimal("10000"));
+            p.setDailyLimit(new BigDecimal("500"));
+            return p;
+        }
         @Bean IdempotencyProperties idempotencyProperties() { return new IdempotencyProperties(); }
     }
 

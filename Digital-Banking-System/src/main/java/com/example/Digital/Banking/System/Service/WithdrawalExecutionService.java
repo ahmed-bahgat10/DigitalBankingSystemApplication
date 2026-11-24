@@ -74,6 +74,7 @@ public class WithdrawalExecutionService {
         account.setBalance(account.getBalance().subtract(amount));
 
         Transaction transaction = new Transaction();
+        transaction.setInitiatedBy(account.getUser());
 
         transaction.setReference(UUID.randomUUID().toString());
         transaction.setAmount(amount);
